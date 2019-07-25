@@ -2,14 +2,15 @@ import pandas as pd
 import os
 from ftplib import FTP
 import xml.etree.ElementTree as ET
-import os
-import pandas as pd
 import sys
 from multiprocessing import Pool
 import numpy as np
 import string
 from argparse import ArgumentParser
 from itertools import repeat
+import shutil
+import subprocess
+import time
 
 ########### Helper functions code from Seqmap/SRA_META/SRAParser.py ###########
 class SampleParser:
@@ -147,12 +148,12 @@ class SRAParser:
 ########## download SRA data ###########
 # code from Seqmap/Pipelines/Update_SRA_meta_data/pull_SRA_meta.ipynb
 
-def downloadSRAMeta(outputDir):
+def downloadSRAMeta(tmpDir):
 
-    bdir = outputDir
-    os.chdir(bdir)
+    bdir = tmpDir
+    #os.chdir(bdir)
 
-    untaredDir = outputDir + '/utaredDir/'
+    untaredDir = tmpDir + '/utaredDir/'
     if not os.path.exists(untaredDir):
         os.makedirs(untaredDir)
 
@@ -202,9 +203,12 @@ def parseSRAData(parseDir, nConcurJob, nthreads):
 ########## Merge SRA data ##########
 # code from Seqmap/SRA_META/SRAmerge.ipynb
 
-def mergeSRA(outputDir, parseDir):
+def mergeSRA(tmpDir, parseDir):
 
-    baseOutDir = outputDir
+    global srsMergedS
+    global srxMergedS
+
+    #baseOutDir = tmpDir
     inDir = parseDir
 
     subsetIds = set(map(lambda s: s.split('.')[0], os.listdir(inDir)))
@@ -216,24 +220,27 @@ def mergeSRA(outputDir, parseDir):
         srxS.append(pd.read_pickle(inDir + Id + '.srx.pickle'))
     srsMergedS = pd.concat(srsS)
     srxMergedS = pd.concat(srxS)
-    srsMergedS.to_pickle(baseOutDir + 'allSRS.pickle.gz')
-    srxMergedS.to_pickle(baseOutDir + 'allSRX.pickle.gz')
+    #srsMergedS.to_pickle(baseOutDir + 'allSRS.pickle.gz')
+    #srxMergedS.to_pickle(baseOutDir + 'allSRX.pickle.gz')
 
 
 ########## annotate SRA meta data based on SRX parsed ##########
 # code from Seqmap/Pipelines/Update_SRA_meta_data/annotate_SRA_meta_data.ipynb
 
-def annotateSRA(outputDir):
+def annotateSRA(tmpDir, outputDir):
 
-    basePickleDir = outputDir
-    accessionProjDir = outputDir + '/SRA_Accessions.tab'
-    accessionDir = outputDir + '/SRA_Run_Members.tab'
+    global srsMergedS
+    global srxMergedS
 
-    srsMergedS = pd.read_pickle(basePickleDir + 'allSRS.pickle.gz')
-    srxMergedS = pd.read_pickle(basePickleDir + 'allSRX.pickle.gz')
+    basePickleDir = tmpDir
+    accessionProjDir = tmpDir + '/SRA_Accessions.tab'
+    accessionDir = tmpDir + '/SRA_Run_Members.tab'
 
-    sra_dump_csv_dir = outputDir + '/sra_dump.csv.gz'
-    sra_dump_pickle_dir = outputDir + '/sra_dump.pickle'
+    #srsMergedS = pd.read_pickle(basePickleDir + 'allSRS.pickle.gz')
+    #srxMergedS = pd.read_pickle(basePickleDir + 'allSRX.pickle.gz')
+
+    sra_dump_csv_dir = tmpDir + '/sra_dump.csv.gz'
+    #sra_dump_pickle_dir = tmpDir + '/sra_dump.pickle'
 
     projAccessDf = pd.read_csv(accessionProjDir, sep='\t', dtype='str', index_col=0)
 
@@ -243,6 +250,8 @@ def annotateSRA(outputDir):
 
     srsToSpecies = pd.Series(index=validScientificNameSrs.index.get_level_values(0), data=validScientificNameSrs.values)
 
+    del srsMergedS
+
     uniqueSrsToSpeciesS = srsToSpecies.groupby(srsToSpecies.index).first()
 
     layoutS = srxMergedS[srxMergedS.index.get_level_values(1) == 'LIBRARY_LAYOUT'].groupby(level=0).first()
@@ -251,10 +260,15 @@ def annotateSRA(outputDir):
 
     srxToSeqS = libraryS.groupby(level=0).first()
 
-    validSrx = srxToSeqS.index.get_level_values(0)
+    del srxMergedS
+
+
+    #validSrx = srxToSeqS.index.get_level_values(0)
 
     subAccessionDf = accessionDf[
         accessionDf.Sample.isin(uniqueSrsToSpeciesS.index) & accessionDf.Experiment.isin(srxToSeqS.index)].copy()
+
+    del accessionDf
 
     subAccessionDf.loc[:, 'ScientificName'] = uniqueSrsToSpeciesS.loc[subAccessionDf.Sample.values].values[:]
 
@@ -266,12 +280,20 @@ def annotateSRA(outputDir):
     srrToSeqS = pd.Series(data=algnedSrx, index=publicRunDf.index)
     publicRunDf.loc[:, 'LibraryStrategy'] = srrToSeqS[:]
 
+
+
     publicRunDf['LibraryLayout'] = layoutS.loc[publicRunDf['Experiment'].values].values
 
     projectSubDf = projAccessDf.loc[publicRunDf.index]
     projectSubDf.columns = 'proj_accession_' + projectSubDf.columns
 
+    del projAccessDf
+
     yearAnnotatedPublicDf = pd.concat([publicRunDf, projectSubDf], axis=1)
+
+    del subAccessionDf
+    del publicRunDf
+    del projectSubDf
 
     yearAnnotatedPublicDf['ScientificName'] = yearAnnotatedPublicDf['ScientificName'].str.replace(' ', '_')
 
@@ -282,6 +304,8 @@ def annotateSRA(outputDir):
     subExportDf = yearAnnotatedPublicDf.loc[:, yearAnnotatedPublicDf.columns != 'Run']
 
     subExportDf['new_ScientificName'] = subExportDf['ScientificName']
+
+    del yearAnnotatedPublicDf
 
     m_4 = subExportDf['new_ScientificName'].str.contains('human')
     # Homo_sapiens
@@ -301,9 +325,11 @@ def annotateSRA(outputDir):
                   u'LibraryLayout', 'new_ScientificName']:
         subExportDf[myCol] = subExportDf[myCol].apply(removeNonAscii)
 
-    subExportDf.to_csv(sra_dump_csv_dir, compression='gzip')
+    #subExportDf.to_csv(sra_dump_csv_dir, compression='gzip')
 
     pickleExportInDf = subExportDf.copy()
+
+    del subExportDf
 
     timeCols = ['proj_accession_Updated'
         , 'proj_accession_Published'
@@ -336,35 +362,90 @@ def annotateSRA(outputDir):
     subsetPickleDf['Run_db'] = subsetPickleDf.index.str.extract('([EDS]RR)', expand=False).values
     subsetPickleDf['Run_digits'] = subsetPickleDf.index.str.extract('[EDS]RR(\d+)', expand=False).astype(np.int)
 
-    subsetPickleDf.to_pickle(sra_dump_pickle_dir)
+    subsetPickleDf = subsetPickleDf.sort_values(by=['ScientificName'])
+    col = subsetPickleDf['ScientificName']
+    ScientificNmaeDic = {}
+    for count, name in enumerate(col):
+        line = count + 1
+        if name in ScientificNmaeDic:
+            ScientificNmaeDic[name][1] = line
+        else:
+            ScientificNmaeDic[name] = [line, line]
+
+    output_sra_dump_dir_index = outputDir + '/sra_dump_index.tsv'
+    f_index = open(output_sra_dump_dir_index, 'w')
+    for name, line in ScientificNmaeDic.items():
+        f_index.write('%s\t%s\t%s\n' % (name, line[0], line[1]))
+    f_index.close()
+
+    output_sra_dump_dir = outputDir + '/sra_dump.tsv'
+    subsetPickleDf.to_csv(output_sra_dump_dir, sep = '\t')
+
+def removeDirIn(path):
+    path += '/'
+    for x in os.listdir(path):
+        if os.path.isfile(path + x):
+            continue
+        cmd = "rm -rf %s" % (path + x)
+        subprocess.Popen(cmd, shell=True)
+
+def removeFileIn(path):
+    path += '/'
+    for x in os.listdir(path):
+        if os.path.isfile(path + x):
+            cmd = "rm %s" % (path + x)
+            subprocess.Popen(cmd, shell=True)
+
+def checkDirExistIn(path):
+    # return True is there is dir in path.
+    # return False is there is no dir in path.
+    path += '/'
+    for x in os.listdir(path):
+        if not os.path.isfile(path + x):
+            return True
+    return False
 
 
 def runAll(outputDir, nthreads):
 
-    # untaredDir = outputDir + '/utaredDir/'
-    parseDir = outputDir + '/SRA_parse/'
+    # untaredDir = tmpDir + '/utaredDir/'
+    tmpDir = outputDir + 'tmp_SRA/'
+    if not os.path.exists(tmpDir):
+        os.makedirs(tmpDir)
+
+    parseDir = tmpDir + '/SRA_parse/'
     if not os.path.exists(parseDir):
         os.makedirs(parseDir)
 
     nConcurJob = 2000
 
     print("downloading SRA data")
-    downloadSRAMeta(outputDir)
+    downloadSRAMeta(tmpDir)
 
     print("parsing SRA data")
     parseSRAData(parseDir, nConcurJob, nthreads)
 
     print("merging SRA data")
-    mergeSRA(outputDir, parseDir)
+    mergeSRA(tmpDir, parseDir)
+
+    removeDirIn(tmpDir)
 
     print("annotating SRA data")
-    annotateSRA(outputDir)
+    annotateSRA(tmpDir, outputDir)
+
+    removeFileIn(tmpDir)
+
+    while (len(os.listdir(tmpDir)) != 0):
+        time.sleep(5)
+
+    shutil.rmtree(tmpDir)
 
 
 if __name__ == '__main__':
     parser = ArgumentParser(description='Download SRA database')
 
     parser.add_argument("--out-dir",
+                        "-o",
                         dest="out_dir",
                         type=str,
                         default=".")
@@ -378,6 +459,12 @@ if __name__ == '__main__':
 
     outputDir = args.out_dir + '/'
     nthreads = args.threads
+
+    if not os.path.exists(outputDir):
+        os.makedirs(outputDir)
+
+    srsMergedS = None
+    srxMergedS = None
 
     runAll(outputDir, nthreads)
 
