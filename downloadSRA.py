@@ -1,3 +1,32 @@
+#!/usr/bin/env python3
+
+#
+# Copyright 2019, Yun Zhang, Christopher Bennett, Daehwan Kim <infphilo@gmail.com>
+#
+# This file is part of download_SRA.
+#
+# download_SRA is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# download_SRA is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with download_SRA.  If not, see <http://www.gnu.org/licenses/>.
+#
+# The script is derived from Skymap project https://doi.org/10.1101/386441.
+#
+
+
+
+
+
+
+
 import pandas as pd
 import os
 from ftplib import FTP
