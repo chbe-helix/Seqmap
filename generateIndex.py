@@ -15,7 +15,7 @@ def makeIndex(inputDataBaseName, outputDir):
         else:
             ScientificNmaeDic[name] = [line, line]
 
-    subsetPickleDf['proj_accession_Published'] = subsetPickleDf['proj_accession_Published'].str.replace('-', '')
+    #subsetPickleDf['proj_accession_Published'] = subsetPickleDf['proj_accession_Published'].str.replace('-', '')
 
     output_sra_dump_dir_index = outputDir + '/sra_dump_index.tsv'
     f_index = open(output_sra_dump_dir_index, 'w')
